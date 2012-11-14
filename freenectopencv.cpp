@@ -26,6 +26,9 @@ IplImage* rgbimg = 0;
 IplImage* tempimg = 0;
 IplImage* red_img = 0;
 IplImage* canny_temp = 0;
+IplImage* prevImg = 0;
+CvScalar alpha;
+CvScalar alphaOpp;
 pthread_mutex_t mutex_depth = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_rgb = PTHREAD_MUTEX_INITIALIZER;
 pthread_t cv_thread;
@@ -63,6 +66,7 @@ IplImage* getThresholdedImage(IplImage* img)
 	IplImage* imgHSV = cvCreateImage(cvGetSize(img), 8, 3);
 	cvCvtColor(img, imgHSV, CV_BGR2HSV);
 	IplImage* imgThreshed = cvCreateImage(cvGetSize(img), 8, 1);
+	//cvScaleAdd(prevImg, alphaOpp, imgThreshed, prevImg);
 	IplImage* redHigh = cvCreateImage(cvGetSize(img), 8, 1);
 	IplImage* redLow = cvCreateImage(cvGetSize(img), 8, 1);
 	cvInRangeS(imgHSV, cvScalar(175, 250, 75), cvScalar(255, 255, 255), redHigh);
@@ -71,6 +75,9 @@ IplImage* getThresholdedImage(IplImage* img)
 	cvReleaseImage(&imgHSV);
 	cvReleaseImage(&redHigh);
 	cvReleaseImage(&redLow);
+	cvSmooth(imgThreshed, imgThreshed, CV_MEDIAN, 7);
+	//cvScaleAdd(imgThreshed, alpha, prevImg, imgThreshed);
+	prevImg = imgThreshed;
 	return imgThreshed;
 }
 
@@ -81,11 +88,12 @@ IplImage* getThresholdedImage(IplImage* img)
 void *cv_threadfunc (void *ptr) {
         cvNamedWindow( FREENECTOPENCV_WINDOW_D, CV_WINDOW_AUTOSIZE );
         cvNamedWindow( FREENECTOPENCV_WINDOW_N, CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "Canny Image", CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "Red Shit", CV_WINDOW_AUTOSIZE );
+	cvNamedWindow( "Cup Contours", CV_WINDOW_AUTOSIZE );
+	cvNamedWindow( "CUP CAM", CV_WINDOW_AUTOSIZE );
         depthimg = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
         rgbimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
         tempimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
+	prevImg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), 8, 1);
 	red_img = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
 	canny_temp = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
 
@@ -108,8 +116,7 @@ void *cv_threadfunc (void *ptr) {
                 cvCvtColor(rgbimg,tempimg,CV_BGR2RGB);
                 cvShowImage(FREENECTOPENCV_WINDOW_N, tempimg);
 		red_img = getThresholdedImage(tempimg);
-		cvShowImage("Red Shit", red_img);
-
+		cvShowImage("CUP CAM", red_img);
 
 		// Canny filter
 		cvCanny(red_img, red_img, 50.0, 200.0, 3);
@@ -123,13 +130,12 @@ void *cv_threadfunc (void *ptr) {
 		//cv::imshow("Canny Image", cups);
 
 		cv::Mat drawing = cv::Mat::zeros(cups.size(), CV_8UC3 );
-		for(int i = 0; i< contours.size(); i++ )
+		for(unsigned int i = 0; i < contours.size(); i++ )
 		{
 			cv::Scalar color = cv::Scalar(100,100,100);
 			drawContours( drawing, contours, i, color, 2, 8, hierarchy, 0, cv::Point() );
 		}
-		cv::imshow("Canny Image", drawing);
-
+		cv::imshow("Cup Contours", drawing);
 
                 //unlock mutex
                 pthread_mutex_unlock( &mutex_rgb );
@@ -146,7 +152,10 @@ void *cv_threadfunc (void *ptr) {
 
 int main(int argc, char **argv)
 {
-
+	alpha = CvScalar();
+	alpha.val[0] = .3;
+	alphaOpp = CvScalar();
+	alphaOpp.val[0] = .7;
         freenect_context *f_ctx;
         freenect_device *f_dev;
 
