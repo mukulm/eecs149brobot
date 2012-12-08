@@ -34,7 +34,6 @@ pthread_t cv_thread;
 
 // callback for depthimage, called by libfreenect
 void depth_cb(freenect_device *dev, void *depth, uint32_t timestamp)
-
 {
         cv::Mat depth8;
         cv::Mat mydepth = cv::Mat( FREENECTOPENCV_DEPTH_WIDTH,FREENECTOPENCV_DEPTH_HEIGHT, CV_16UC1, depth);
@@ -66,8 +65,8 @@ IplImage* getRedImage(IplImage* img)
 	IplImage* imgThreshed = cvCreateImage(cvGetSize(img), 8, 1);
 	IplImage* redHigh = cvCreateImage(cvGetSize(img), 8, 1);
 	IplImage* redLow = cvCreateImage(cvGetSize(img), 8, 1);
-	cvInRangeS(imgHSV, cvScalar(175, 250, 75), cvScalar(255, 255, 255), redHigh);
-	cvInRangeS(imgHSV, cvScalar(0, 250, 25), cvScalar(1, 255, 255), redLow);
+	cvInRangeS(imgHSV, cvScalar(170, 240, 75), cvScalar(255, 255, 255), redHigh);
+	cvInRangeS(imgHSV, cvScalar(0, 240, 25), cvScalar(5, 255, 255), redLow);
 	cvOr(redHigh, redLow, imgThreshed);
 	cvReleaseImage(&imgHSV);
 	cvReleaseImage(&redHigh);
@@ -101,16 +100,17 @@ void *cv_threadfunc (void *ptr) {
 	cvNamedWindow( "Cup Contours", CV_WINDOW_AUTOSIZE );
 	cvNamedWindow( "CUP CAM", CV_WINDOW_AUTOSIZE );
 	cvNamedWindow( "BALL CAM", CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "Ball Outlines", CV_WINDOW_AUTOSIZE );
+	cvNamedWindow( "Ball Contours", CV_WINDOW_AUTOSIZE );
         depthimg = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
         rgbimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
         tempimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
 	red_img = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
 	orange_img = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
 	canny_temp = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
-
+	int frameCount = 0;
         // use image polling
         while (1) {
+		frameCount++;
                 //lock mutex for depth image
                 pthread_mutex_lock( &mutex_depth );
                 // show image to window
@@ -118,7 +118,7 @@ void *cv_threadfunc (void *ptr) {
 		cvCvtColor(depthimg,tempimg,CV_GRAY2BGR);
                 //cvCvtColor(tempimg,tempimg,CV_HSV2BGR);
 
-                cvShowImage(FREENECTOPENCV_WINDOW_D,tempimg);
+                cvShowImage(FREENECTOPENCV_WINDOW_D,depthimg);
                 //unlock mutex for depth image
                 pthread_mutex_unlock( &mutex_depth );
 
@@ -143,7 +143,6 @@ void *cv_threadfunc (void *ptr) {
 		cv::findContours(cups, cupContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE, cv::Point());
 		//cv::boxFilter(cups, cups, -1, cv::Size(3, 3));
 		//cv::imshow("Canny Image", cups);
-
 		cv::Mat drawing = cv::Mat::zeros(cups.size(), CV_8UC3 );
 	        double biggestSize = -1;
 		int biggestContour = -1;	
@@ -160,15 +159,22 @@ void *cv_threadfunc (void *ptr) {
 		if (cupContours.size() > 0)
 		{
 			cupRect = cv::boundingRect(cv::Mat(cupContours[biggestContour]));
+			int centX = cupRect.x + cupRect.width/2;
+			int centY = cupRect.y + cupRect.height/2;
+			//printf("Rectangle at (%d, %d), frame #%d", centX, centY, frameCount);
+			int cupdist = depthimg->imageData[centX + centY*FREENECTOPENCV_RGB_WIDTH];
+			//printf("Cup is distance %d away \n", cupdist);
 		}
 		cv::Scalar color = cv::Scalar(100,100,100);
 		drawContours( drawing, cupContours, biggestContour, color, 2, 8, cupHierarchy, 0, cv::Point());
+		cv::imshow("Cup Contours", drawing);
 
 		// Look for circles (ball)
 		cv::Mat balls(orange_img);
 		std::vector<std::vector <cv::Point> > ballContours;
 		std::vector<cv::Vec4i> ballHierarchy;
 		cv::findContours(balls, ballContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE, cv::Point());
+		drawing = cv::Mat::zeros(cups.size(), CV_8UC3 );
 	        biggestSize = -1;
 		biggestContour = -1;	
 		for(unsigned int i = 0; i < ballContours.size(); i++ )
@@ -186,8 +192,7 @@ void *cv_threadfunc (void *ptr) {
 			ballRect = cv::boundingRect(cv::Mat(ballContours[biggestContour]));
 		}
 		drawContours( drawing, ballContours, biggestContour, color, 2, 8, ballHierarchy, 0, cv::Point());
-
-		cv::imshow("Ball Outline", drawing);
+		cv::imshow("Ball Contours", drawing);
 
                 //unlock mutex
                 pthread_mutex_unlock( &mutex_rgb );
