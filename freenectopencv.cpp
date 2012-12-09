@@ -28,6 +28,7 @@ IplImage* tempimg = 0;
 IplImage* red_img = 0;
 IplImage* orange_img = 0;
 IplImage* canny_temp = 0;
+uint8_t cupdist = 0;
 pthread_mutex_t mutex_depth = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_rgb = PTHREAD_MUTEX_INITIALIZER;
 pthread_t cv_thread;
@@ -65,8 +66,8 @@ IplImage* getRedImage(IplImage* img)
 	IplImage* imgThreshed = cvCreateImage(cvGetSize(img), 8, 1);
 	IplImage* redHigh = cvCreateImage(cvGetSize(img), 8, 1);
 	IplImage* redLow = cvCreateImage(cvGetSize(img), 8, 1);
-	cvInRangeS(imgHSV, cvScalar(170, 240, 75), cvScalar(255, 255, 255), redHigh);
-	cvInRangeS(imgHSV, cvScalar(0, 240, 25), cvScalar(5, 255, 255), redLow);
+	cvInRangeS(imgHSV, cvScalar(170, 225, 35), cvScalar(255, 255, 255), redHigh);
+	cvInRangeS(imgHSV, cvScalar(0, 225, 25), cvScalar(6, 255, 255), redLow);
 	cvOr(redHigh, redLow, imgThreshed);
 	cvReleaseImage(&imgHSV);
 	cvReleaseImage(&redHigh);
@@ -107,6 +108,7 @@ void *cv_threadfunc (void *ptr) {
 	red_img = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
 	orange_img = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
 	canny_temp = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
+	cupdist = 0;
 	int frameCount = 0;
         // use image polling
         while (1) {
@@ -162,11 +164,13 @@ void *cv_threadfunc (void *ptr) {
 			int centX = cupRect.x + cupRect.width/2;
 			int centY = cupRect.y + cupRect.height/2;
 			//printf("Rectangle at (%d, %d), frame #%d", centX, centY, frameCount);
-			int cupdist = depthimg->imageData[centX + centY*FREENECTOPENCV_RGB_WIDTH];
-			//printf("Cup is distance %d away \n", cupdist);
+			cupdist = depthimg->imageData[centX + centY*FREENECTOPENCV_RGB_WIDTH];
+			double inches = .0000664733958*cupdist*cupdist*cupdist - .03033943*cupdist*cupdist + 4.844920*cupdist - 240.279;
+			printf("Cup is distance %f away, raw %u \n", inches, cupdist);
 		}
 		cv::Scalar color = cv::Scalar(100,100,100);
-		drawContours( drawing, cupContours, biggestContour, color, 2, 8, cupHierarchy, 0, cv::Point());
+		// drawContours( drawing, cupContours, biggestContour, color, 2, 8, cupHierarchy, 0, cv::Point());
+		drawContours( drawing, cupContours, -1, color, 2, 8, cupHierarchy, 0, cv::Point());
 		cv::imshow("Cup Contours", drawing);
 
 		// Look for circles (ball)
