@@ -18,8 +18,6 @@
 
 #include <cv.h>
 #include <highgui.h>
-#include <cvaux.h>
-#include <cxcore.h>
 
 #define FREENECTOPENCV_WINDOW_D "Depthimage"
 #define FREENECTOPENCV_WINDOW_N "Normalimage"
@@ -117,7 +115,7 @@ void *cv_threadfunc (void *ptr) {
     rgbimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
     tempimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
 	imgHSV = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), 8, 3);
-	thresholded = ccvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
+	thresholded = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
 	int frameCount = 0;
     // use image polling
     while (1) {
