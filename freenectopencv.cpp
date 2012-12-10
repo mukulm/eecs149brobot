@@ -19,6 +19,10 @@
 #include <cv.h>
 #include <highgui.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define FREENECTOPENCV_WINDOW_D "Depthimage"
 #define FREENECTOPENCV_WINDOW_N "Normalimage"
 #define FREENECTOPENCV_RGB_DEPTH 3
@@ -27,6 +31,8 @@
 #define FREENECTOPENCV_RGB_HEIGHT 480
 #define FREENECTOPENCV_DEPTH_WIDTH 640
 #define FREENECTOPENCV_DEPTH_HEIGHT 480
+#define MIN_AREA 50.00
+#define MAX_TOL 50.00
 
 IplImage* depthimg = 0;
 IplImage* rgbimg = 0;
@@ -35,7 +41,7 @@ IplImage* orange_img = 0;
 IplImage* canny_temp = 0;
 IplImage* imgHSV = 0;
 IplImage* thresholded = 0;
-IplImage* thresholded2 = 0;
+IplImage* ellipseimg = 0;
 uint8_t cupdist = 0;
 pthread_mutex_t mutex_depth = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_rgb = PTHREAD_MUTEX_INITIALIZER;
@@ -66,21 +72,21 @@ void rgb_cb(freenect_device *dev, void *rgb, uint32_t timestamp)
 }
 
 /*
- * thread for displaying the opencv content
- */
+* thread for displaying the opencv content
+*/
 void *cv_threadfunc (void *ptr) {
     cvNamedWindow( FREENECTOPENCV_WINDOW_D, CV_WINDOW_AUTOSIZE );
     cvNamedWindow( FREENECTOPENCV_WINDOW_N, CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "BALL CAM", CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "HSV", CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "AFTER FILTER", CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "Ball Contours", CV_WINDOW_AUTOSIZE );
+    cvNamedWindow( "BALL CAM", CV_WINDOW_AUTOSIZE );
+    cvNamedWindow( "HSV", CV_WINDOW_AUTOSIZE );
+    cvNamedWindow( "AFTER FILTER", CV_WINDOW_AUTOSIZE );
+    cvNamedWindow( "Ellipse Contours", CV_WINDOW_AUTOSIZE );
     depthimg = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
     rgbimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
-	imgHSV = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 3);
-	thresholded = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
-	thresholded2 = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
-	int frameCount = 0;
+    imgHSV = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 3);
+    thresholded = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
+    ellipseimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 3);
+    int frameCount = 0;
     CvScalar hsv_min = cvScalar(40, 50, 180);
     CvScalar hsv_max = cvScalar(70,255,255);
     // use image polling
@@ -91,67 +97,85 @@ void *cv_threadfunc (void *ptr) {
         }
         //lock mutex for rgb image
         pthread_mutex_lock( &mutex_rgb );
-		//convert colorspace to HSV
-		cvCvtColor(rgbimg, imgHSV, CV_RGB2HSV);
-		//Filter out colors exceeding range.
-		cvInRangeS(imgHSV, hsv_min, hsv_max, thresholded);
-		//cvSmooth(thresholded, thresholded, CV_GAUSSIAN, 7);
-		cvSmooth(thresholded, thresholded, CV_MEDIAN, 9);
-		//cvSmooth(thresholded, thresholded, CV_GAUSSIAN, 7);
-		
+        //convert colorspace to HSV
+        CvMemStorage* storage = cvCreateMemStorage(0);
+        CvSeq* contour = 0;   
+        cvCvtColor(rgbimg, imgHSV, CV_RGB2HSV);
+        //Filter out colors exceeding range.
+        cvInRangeS(imgHSV, hsv_min, hsv_max, thresholded);
+        cvSmooth(thresholded, thresholded, CV_MEDIAN, 9);
+        //cvDilate(thresholded, thresholded, NULL, 2);
+        //cvFindContours( thresholded, storage, &contour, sizeof(CvContour), CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE, cvPoint(0,0));
+        //cvZero(ellipseimg);
+        /*for( ; contour != 0; contour = contour->h_next )
+        {
+            double actual_area = fabs(cvContourArea(contour, CV_WHOLE_SEQ, 0));
+            if (actual_area < MIN_AREA)
+                continue;
 
+            CvRect rect = ((CvContour *)contour)->rect;
+            int A = rect.width / 2; 
+            int B = rect.height / 2;
+            double estimated_area = M_PI * A * B;
+            double error = fabs(actual_area - estimated_area);    
+            if (error > MAX_TOL)
+                continue;    
+            printf("center x: %d y: %d A: %d B: %d\n", rect.x + A, rect.y + B, A, B);
+            CvScalar color = CV_RGB( 255, 0, 0);
+            cvDrawContours( ellipseimg, contour, color, color, -1, CV_FILLED, 8, cvPoint(0,0));
+        }*/
 
-		cvShowImage("BALL CAM", rgbimg);
-		cvShowImage("AFTER FILTER", thresholded);	
-
+        cvShowImage("BALL CAM", rgbimg);
+        cvShowImage("AFTER FILTER", thresholded);	
+        //cvShowImage("Ellipse Contours", ellipseimg);   
 
         //unlock mutex
         pthread_mutex_unlock( &mutex_rgb );
 
         // wait for quit key
         if( cvWaitKey( 15 )==27 )
-			break;
+            break;
 
-        }
-        pthread_exit(NULL);
-		return NULL;
+    }
+    pthread_exit(NULL);
+    return NULL;
 }
 
 int main(int argc, char **argv)
 {
-        freenect_context *f_ctx;
-        freenect_device *f_dev;
+    freenect_context *f_ctx;
+    freenect_device *f_dev;
 
-        int res = 0;
-        int die = 0;
-        printf("Kinect camera test\n");
+    int res = 0;
+    int die = 0;
+    printf("Kinect camera test\n");
 
-        if (freenect_init(&f_ctx, NULL) < 0) {
-                        printf("freenect_init() failed\n");
-                        return 1;
-                }
+    if (freenect_init(&f_ctx, NULL) < 0) {
+                    printf("freenect_init() failed\n");
+                    return 1;
+            }
 
-                if (freenect_open_device(f_ctx, &f_dev, 0) < 0) {
-                        printf("Could not open device\n");
-                        return 1;
-                }
+            if (freenect_open_device(f_ctx, &f_dev, 0) < 0) {
+                    printf("Could not open device\n");
+                    return 1;
+            }
 
-        freenect_set_depth_callback(f_dev, depth_cb);
-        freenect_set_video_callback(f_dev, rgb_cb);
-        freenect_set_video_format(f_dev, FREENECT_VIDEO_RGB);
-		freenect_set_tilt_degs(f_dev, -15);
-        // create opencv display thread
-        res = pthread_create(&cv_thread, NULL, cv_threadfunc, (void*) depthimg);
-        if (res) {
-                printf("pthread_create failed\n");
-                return 1;
-        }
+    freenect_set_depth_callback(f_dev, depth_cb);
+    freenect_set_video_callback(f_dev, rgb_cb);
+    freenect_set_video_format(f_dev, FREENECT_VIDEO_RGB);
+    freenect_set_tilt_degs(f_dev, -15);
+    // create opencv display thread
+    res = pthread_create(&cv_thread, NULL, cv_threadfunc, (void*) depthimg);
+    if (res) {
+        printf("pthread_create failed\n");
+        return 1;
+    }
 
-        printf("init done\n");
+    printf("init done\n");
 
-        freenect_start_depth(f_dev);
-        freenect_start_video(f_dev);
+    freenect_start_depth(f_dev);
+    freenect_start_video(f_dev);
 
-        while(!die && freenect_process_events(f_ctx) >= 0 );
+    while(!die && freenect_process_events(f_ctx) >= 0 );
 
 }
