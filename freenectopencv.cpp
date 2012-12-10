@@ -2,8 +2,14 @@
 // Tracking colored objects: http://www.aishack.in/2010/07/tracking-colored-objects-in-opencv/
 // Tracking ball: http://projectproto.blogspot.com/2012/04/android-opencv-object-tracking.html
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include <math.h>
+#include <float.h>
+#include <limits.h>
+#include <time.h>
+#include <ctype.h>
 
 #include <libfreenect.h>
 #include <pthread.h>
@@ -22,33 +28,15 @@
 #define FREENECTOPENCV_DEPTH_WIDTH 640
 #define FREENECTOPENCV_DEPTH_HEIGHT 480
 
-#define PI 3.14159265
-#define ALPHA .7
-#define DEPTH_MIN_DIST 23.0
-#define DEPTH_MAX_DIST 73.0
-#define X_OFFSET_TO_DEG 8.7
-#define FRAMES_TO_CONVERGENCE 30
-#define DISTANCE_THRESHOLD 1.0
-#define OFFSET_THRESHOLD 0.3
-#define X3_COEFF .0000664733958
-#define X2_COEFF .03033943
-#define X1_COEFF 4.844920
-#define X0_COEFF 240.279
-
 IplImage* depthimg = 0;
 IplImage* rgbimg = 0;
 IplImage* tempimg = 0;
-IplImage* red_img = 0;
 IplImage* orange_img = 0;
 IplImage* canny_temp = 0;
+IplImage* imgHSV = 0;
+IplImage* thresholded = 0;
+IplImage* thresholded2 = 0;
 uint8_t cupdist = 0;
-uint16_t centX = 0;
-uint16_t centY = 0;
-double inches = 0.0;
-double prevInches = 0.0;
-double offsetInches = 0.0;
-double prevOffsetInches = 0.0;
-int keyFrameCount = 0;
 pthread_mutex_t mutex_depth = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_rgb = PTHREAD_MUTEX_INITIALIZER;
 pthread_t cv_thread;
@@ -77,170 +65,56 @@ void rgb_cb(freenect_device *dev, void *rgb, uint32_t timestamp)
         pthread_mutex_unlock( &mutex_rgb );
 }
 
-// Looks for red cups
-IplImage* getRedImage(IplImage* img)
-{
-	// Convert the image into an HSV image
-	IplImage* imgHSV = cvCreateImage(cvGetSize(img), 8, 3);
-	cvCvtColor(img, imgHSV, CV_BGR2HSV);
-	IplImage* imgThreshed = cvCreateImage(cvGetSize(img), 8, 1);
-	IplImage* redHigh = cvCreateImage(cvGetSize(img), 8, 1);
-	IplImage* redLow = cvCreateImage(cvGetSize(img), 8, 1);
-	cvInRangeS(imgHSV, cvScalar(170, 225, 35), cvScalar(255, 255, 255), redHigh);
-	cvInRangeS(imgHSV, cvScalar(0, 225, 25), cvScalar(6, 255, 255), redLow);
-	cvOr(redHigh, redLow, imgThreshed);
-	cvReleaseImage(&imgHSV);
-	cvReleaseImage(&redHigh);
-	cvReleaseImage(&redLow);
-	cvSmooth(imgThreshed, imgThreshed, CV_MEDIAN, 7);
-	return imgThreshed;
-}
-
-// Looks for orange ball
-IplImage* getOrangeImage(IplImage* img)
-{
-	// Convert the image into an HSV image
-	IplImage* imgHSV = cvCreateImage(cvGetSize(img), 8, 3);
-	cvCvtColor(img, imgHSV, CV_BGR2HSV);
-	IplImage* imgThreshed = cvCreateImage(cvGetSize(img), 8, 1);
-	cvInRangeS(imgHSV, cvScalar(10, 170, 50), cvScalar(17, 255, 255), imgThreshed);
-	cvReleaseImage(&imgHSV);
-	cvSmooth(imgThreshed, imgThreshed, CV_MEDIAN, 7);
-	//cvSmooth(imgThreshed, imgThreshed, CV_GAUSSIAN, 9, 9);
-	return imgThreshed;
-}
-
-
 /*
  * thread for displaying the opencv content
  */
 void *cv_threadfunc (void *ptr) {
-        cvNamedWindow( FREENECTOPENCV_WINDOW_D, CV_WINDOW_AUTOSIZE );
-        cvNamedWindow( FREENECTOPENCV_WINDOW_N, CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "Cup Contours", CV_WINDOW_AUTOSIZE );
-	cvNamedWindow( "CUP CAM", CV_WINDOW_AUTOSIZE );
+    cvNamedWindow( FREENECTOPENCV_WINDOW_D, CV_WINDOW_AUTOSIZE );
+    cvNamedWindow( FREENECTOPENCV_WINDOW_N, CV_WINDOW_AUTOSIZE );
 	cvNamedWindow( "BALL CAM", CV_WINDOW_AUTOSIZE );
+	cvNamedWindow( "HSV", CV_WINDOW_AUTOSIZE );
+	cvNamedWindow( "AFTER FILTER", CV_WINDOW_AUTOSIZE );
 	cvNamedWindow( "Ball Contours", CV_WINDOW_AUTOSIZE );
-        depthimg = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
-        rgbimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
-        tempimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
-	red_img = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
-	orange_img = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
-	canny_temp = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
-	cupdist = 0;
-	keyFrameCount = 0;
-        // use image polling
-        while (1) {
-		keyFrameCount++;
-                //lock mutex for depth image
-                pthread_mutex_lock( &mutex_depth );
-                // show image to window
-                cvCanny(depthimg, canny_temp, 50.0, 200.0, 3);
-		cvCvtColor(depthimg,tempimg,CV_GRAY2BGR);
-                //cvCvtColor(tempimg,tempimg,CV_HSV2BGR);
-
-                cvShowImage(FREENECTOPENCV_WINDOW_D,depthimg);
-                //unlock mutex for depth image
-                pthread_mutex_unlock( &mutex_depth );
-
-                //lock mutex for rgb image
-                pthread_mutex_lock( &mutex_rgb );
-                // show image to window
-                cvCvtColor(rgbimg,tempimg,CV_BGR2RGB);
-                cvShowImage(FREENECTOPENCV_WINDOW_N, tempimg);
-		red_img = getRedImage(tempimg);
-		orange_img = getOrangeImage(tempimg);
-		cvShowImage("CUP CAM", red_img);
-		cvShowImage("BALL CAM", orange_img);
+    depthimg = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
+    rgbimg = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_RGB_DEPTH);
+	imgHSV = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 3);
+	thresholded = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
+	thresholded2 = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
+	int frameCount = 0;
+    CvScalar hsv_min = cvScalar(40, 50, 180);
+    CvScalar hsv_max = cvScalar(70,255,255);
+    // use image polling
+    while (1) {
+        if (!rgbimg){
+            printf("ERROR no rgb_img");
+            break;
+        }
+        //lock mutex for rgb image
+        pthread_mutex_lock( &mutex_rgb );
+		//convert colorspace to HSV
+		cvCvtColor(rgbimg, imgHSV, CV_RGB2HSV);
+		//Filter out colors exceeding range.
+		cvInRangeS(imgHSV, hsv_min, hsv_max, thresholded);
+		//cvSmooth(thresholded, thresholded, CV_GAUSSIAN, 7);
+		cvSmooth(thresholded, thresholded, CV_MEDIAN, 9);
+		//cvSmooth(thresholded, thresholded, CV_GAUSSIAN, 7);
 		
 
-		// Canny filter
-		cvCanny(red_img, red_img, 50.0, 200.0, 3);
-		//cvShowImage("Canny Image", red_img);
-		cv::Mat cups(red_img);
-		//cv::smooth(cups, cups);
-		std::vector<std::vector <cv::Point> > cupContours;
-		std::vector<cv::Vec4i> cupHierarchy;
-		cv::findContours(cups, cupContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE, cv::Point());
-		//cv::boxFilter(cups, cups, -1, cv::Size(3, 3));
-		//cv::imshow("Canny Image", cups);
-		cv::Scalar color = cv::Scalar(100,100,100);
-		cv::Mat drawing = cv::Mat::zeros(cups.size(), CV_8UC3 );
-	        double biggestSize = -1;
-		int biggestContour = -1;	
-		for(unsigned int i = 0; i < cupContours.size(); i++ )
-		{
-			std::vector <cv::Point> cont = cupContours[i];
-			double s = cv::contourArea(cont);
-			if (s > biggestSize) {
-				biggestSize = s;
-				biggestContour = i;
-			}
-			//drawContours(drawing, cupContours, i, color, 2, 8, cupHierarchy, 0, cv::Point());
-		}
-		cv::Rect cupRect;
-		if (cupContours.size() > 0)
-		{
-			cupRect = cv::boundingRect(cv::Mat(cupContours[biggestContour]));
-			centX = cupRect.x + cupRect.width/2;
-			centY = cupRect.y + cupRect.height/2;
-			cupdist = depthimg->imageData[centX + centY*FREENECTOPENCV_RGB_WIDTH];
-			inches = X3_COEFF*cupdist*cupdist*cupdist - X2_COEFF*cupdist*cupdist + X1_COEFF*cupdist - X0_COEFF;
-			offsetInches = inches * sin(((centX - FREENECTOPENCV_RGB_WIDTH/2.0) / X_OFFSET_TO_DEG) * PI / 180.0);
-			if ((inches > DEPTH_MIN_DIST) && (inches < DEPTH_MAX_DIST)) {
-				inches = ALPHA * prevInches + (1-ALPHA) * inches;
-				offsetInches =  ALPHA * prevOffsetInches + (1-ALPHA) * offsetInches;
-				if ((keyFrameCount > FRAMES_TO_CONVERGENCE) 
-				    && ((abs(inches - prevInches) > DISTANCE_THRESHOLD)
-					|| (abs(offsetInches - prevOffsetInches > OFFSET_THRESHOLD)))) {
-					printf("Cup at distance %f, offset %f was hit!\n", prevInches, prevOffsetInches);
-					keyFrameCount = 0;
-				}
-				else
-					printf("Cup was distance %f offset %f, now dist %f offset %f\n", prevInches, prevOffsetInches, inches, offsetInches);
-				prevInches = inches;
-				prevOffsetInches = offsetInches;
-			}
-		}
-		drawContours(drawing, cupContours, biggestContour, color, 2, 8, cupHierarchy, 0, cv::Point());
-		cv::imshow("Cup Contours", drawing);
 
-		// Look for circles (ball)
-		cv::Mat balls(orange_img);
-		std::vector<std::vector <cv::Point> > ballContours;
-		std::vector<cv::Vec4i> ballHierarchy;
-		cv::findContours(balls, ballContours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE, cv::Point());
-		drawing = cv::Mat::zeros(cups.size(), CV_8UC3 );
-	        biggestSize = -1;
-		biggestContour = -1;	
-		for(unsigned int i = 0; i < ballContours.size(); i++ )
-		{
-			std::vector <cv::Point> cont = ballContours[i];
-			double s = cv::contourArea(cont);
-			if (s > biggestSize) {
-				biggestSize = s;
-				biggestContour = i;
-			}
-		}
-		cv::Rect ballRect;
-		if (ballContours.size() > 0)
-		{
-			ballRect = cv::boundingRect(cv::Mat(ballContours[biggestContour]));
-		}
-		drawContours( drawing, ballContours, biggestContour, color, 2, 8, ballHierarchy, 0, cv::Point());
-		cv::imshow("Ball Contours", drawing);
+		cvShowImage("BALL CAM", rgbimg);
+		cvShowImage("AFTER FILTER", thresholded);	
 
-                //unlock mutex
-                pthread_mutex_unlock( &mutex_rgb );
 
-                // wait for quit key
-                if( cvWaitKey( 15 )==27 )
+        //unlock mutex
+        pthread_mutex_unlock( &mutex_rgb );
+
+        // wait for quit key
+        if( cvWaitKey( 15 )==27 )
 			break;
 
         }
         pthread_exit(NULL);
 		return NULL;
-
 }
 
 int main(int argc, char **argv)
@@ -265,7 +139,7 @@ int main(int argc, char **argv)
         freenect_set_depth_callback(f_dev, depth_cb);
         freenect_set_video_callback(f_dev, rgb_cb);
         freenect_set_video_format(f_dev, FREENECT_VIDEO_RGB);
-	freenect_set_tilt_degs(f_dev, 0);
+		freenect_set_tilt_degs(f_dev, -15);
         // create opencv display thread
         res = pthread_create(&cv_thread, NULL, cv_threadfunc, (void*) depthimg);
         if (res) {
