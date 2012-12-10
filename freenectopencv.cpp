@@ -22,6 +22,19 @@
 #define FREENECTOPENCV_DEPTH_WIDTH 640
 #define FREENECTOPENCV_DEPTH_HEIGHT 480
 
+#define PI 3.14159265
+#define ALPHA .7
+#define DEPTH_MIN_DIST 23.0
+#define DEPTH_MAX_DIST 73.0
+#define X_OFFSET_TO_DEG 8.7
+#define FRAMES_TO_CONVERGENCE 30
+#define DISTANCE_THRESHOLD 1.0
+#define OFFSET_THRESHOLD 0.3
+#define X3_COEFF .0000664733958
+#define X2_COEFF .03033943
+#define X1_COEFF 4.844920
+#define X0_COEFF 240.279
+
 IplImage* depthimg = 0;
 IplImage* rgbimg = 0;
 IplImage* tempimg = 0;
@@ -29,6 +42,13 @@ IplImage* red_img = 0;
 IplImage* orange_img = 0;
 IplImage* canny_temp = 0;
 uint8_t cupdist = 0;
+uint16_t centX = 0;
+uint16_t centY = 0;
+double inches = 0.0;
+double prevInches = 0.0;
+double offsetInches = 0.0;
+double prevOffsetInches = 0.0;
+int keyFrameCount = 0;
 pthread_mutex_t mutex_depth = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_rgb = PTHREAD_MUTEX_INITIALIZER;
 pthread_t cv_thread;
@@ -108,10 +128,10 @@ void *cv_threadfunc (void *ptr) {
 	orange_img = cvCreateImage(cvSize(FREENECTOPENCV_RGB_WIDTH, FREENECTOPENCV_RGB_HEIGHT), IPL_DEPTH_8U, 1);
 	canny_temp = cvCreateImage(cvSize(FREENECTOPENCV_DEPTH_WIDTH, FREENECTOPENCV_DEPTH_HEIGHT), IPL_DEPTH_8U, FREENECTOPENCV_DEPTH_DEPTH);
 	cupdist = 0;
-	int frameCount = 0;
+	keyFrameCount = 0;
         // use image polling
         while (1) {
-		frameCount++;
+		keyFrameCount++;
                 //lock mutex for depth image
                 pthread_mutex_lock( &mutex_depth );
                 // show image to window
@@ -156,20 +176,33 @@ void *cv_threadfunc (void *ptr) {
 				biggestSize = s;
 				biggestContour = i;
 			}
-			drawContours(drawing, cupContours, i, color, 2, 8, cupHierarchy, 0, cv::Point());
+			//drawContours(drawing, cupContours, i, color, 2, 8, cupHierarchy, 0, cv::Point());
 		}
 		cv::Rect cupRect;
 		if (cupContours.size() > 0)
 		{
 			cupRect = cv::boundingRect(cv::Mat(cupContours[biggestContour]));
-			int centX = cupRect.x + cupRect.width/2;
-			int centY = cupRect.y + cupRect.height/2;
-			//printf("Rectangle at (%d, %d), frame #%d", centX, centY, frameCount);
+			centX = cupRect.x + cupRect.width/2;
+			centY = cupRect.y + cupRect.height/2;
 			cupdist = depthimg->imageData[centX + centY*FREENECTOPENCV_RGB_WIDTH];
-			double inches = .0000664733958*cupdist*cupdist*cupdist - .03033943*cupdist*cupdist + 4.844920*cupdist - 240.279;
-			printf("Cup is distance %f away, raw %u \n", inches, cupdist);
+			inches = X3_COEFF*cupdist*cupdist*cupdist - X2_COEFF*cupdist*cupdist + X1_COEFF*cupdist - X0_COEFF;
+			offsetInches = inches * sin(((centX - FREENECTOPENCV_RGB_WIDTH/2.0) / X_OFFSET_TO_DEG) * PI / 180.0);
+			if ((inches > DEPTH_MIN_DIST) && (inches < DEPTH_MAX_DIST)) {
+				inches = ALPHA * prevInches + (1-ALPHA) * inches;
+				offsetInches =  ALPHA * prevOffsetInches + (1-ALPHA) * offsetInches;
+				if ((keyFrameCount > FRAMES_TO_CONVERGENCE) 
+				    && ((abs(inches - prevInches) > DISTANCE_THRESHOLD)
+					|| (abs(offsetInches - prevOffsetInches > OFFSET_THRESHOLD)))) {
+					printf("Cup at distance %f, offset %f was hit!\n", prevInches, prevOffsetInches);
+					keyFrameCount = 0;
+				}
+				else
+					printf("Cup was distance %f offset %f, now dist %f offset %f\n", prevInches, prevOffsetInches, inches, offsetInches);
+				prevInches = inches;
+				prevOffsetInches = offsetInches;
+			}
 		}
-		// drawContours(drawing, cupContours, biggestContour, color, 2, 8, cupHierarchy, 0, cv::Point());
+		drawContours(drawing, cupContours, biggestContour, color, 2, 8, cupHierarchy, 0, cv::Point());
 		cv::imshow("Cup Contours", drawing);
 
 		// Look for circles (ball)
