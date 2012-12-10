@@ -48,7 +48,10 @@ double inches = 0.0;
 double prevInches = 0.0;
 double offsetInches = 0.0;
 double prevOffsetInches = 0.0;
+double stableInches = 0.0;
+double stableOffsetInches = 0.0;
 int keyFrameCount = 0;
+unsigned short hitCount = 0;
 pthread_mutex_t mutex_depth = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_rgb = PTHREAD_MUTEX_INITIALIZER;
 pthread_t cv_thread;
@@ -86,8 +89,8 @@ IplImage* getRedImage(IplImage* img)
 	IplImage* imgThreshed = cvCreateImage(cvGetSize(img), 8, 1);
 	IplImage* redHigh = cvCreateImage(cvGetSize(img), 8, 1);
 	IplImage* redLow = cvCreateImage(cvGetSize(img), 8, 1);
-	cvInRangeS(imgHSV, cvScalar(170, 225, 35), cvScalar(255, 255, 255), redHigh);
-	cvInRangeS(imgHSV, cvScalar(0, 225, 25), cvScalar(6, 255, 255), redLow);
+	cvInRangeS(imgHSV, cvScalar(165, 170, 45), cvScalar(255, 255, 255), redHigh);
+	cvInRangeS(imgHSV, cvScalar(0, 170, 45), cvScalar(6, 255, 255), redLow);
 	cvOr(redHigh, redLow, imgThreshed);
 	cvReleaseImage(&imgHSV);
 	cvReleaseImage(&redHigh);
@@ -191,13 +194,21 @@ void *cv_threadfunc (void *ptr) {
 				inches = ALPHA * prevInches + (1-ALPHA) * inches;
 				offsetInches =  ALPHA * prevOffsetInches + (1-ALPHA) * offsetInches;
 				if ((keyFrameCount > FRAMES_TO_CONVERGENCE) 
-				    && ((abs(inches - prevInches) > DISTANCE_THRESHOLD)
-					|| (abs(offsetInches - prevOffsetInches > OFFSET_THRESHOLD)))) {
+				    && ((abs(inches - stableInches) > DISTANCE_THRESHOLD)
+					|| (abs(offsetInches - stableOffsetInches > OFFSET_THRESHOLD)))) {
+			       		hitCount += 1;
+				}
+				if (hitCount < 2) {
+					stableInches = inches;
+					stableOffsetInches = offsetInches;
+				}
+				if (hitCount > 3) {
 					printf("Cup at distance %f, offset %f was hit!\n", prevInches, prevOffsetInches);
 					keyFrameCount = 0;
+					hitCount = 0;
 				}
 				else
-					printf("Cup was distance %f offset %f, now dist %f offset %f\n", prevInches, prevOffsetInches, inches, offsetInches);
+					printf("Cup dist %f offset %f\n", inches, offsetInches);
 				prevInches = inches;
 				prevOffsetInches = offsetInches;
 			}
